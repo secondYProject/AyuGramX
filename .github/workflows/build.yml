@@ -1,0 +1,73 @@
+name: android-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_SDK_ROOT: ${{ runner.home }}/Android/Sdk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Install apt packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip git-lfs build-essential ccache pkg-config autoconf automake libtool python3 python3-pip
+          git lfs install
+
+      - name: Create Android SDK directory
+        run: mkdir -p "${ANDROID_SDK_ROOT}"
+
+      - name: Download Android commandline tools
+        run: |
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-latest.zip -O /tmp/cmdline-tools.zip
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
+          mv /tmp/cmdline-tools/cmdline-tools/* "${ANDROID_SDK_ROOT}/cmdline-tools/latest/"
+          rm -rf /tmp/cmdline-tools /tmp/cmdline-tools.zip
+
+      - name: Install Android SDK components (platform-tools, platform 35, build-tools, ndk, cmake)
+        run: |
+          yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" --sdk_root="${ANDROID_SDK_ROOT}" --licenses
+          "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" --sdk_root="${ANDROID_SDK_ROOT}" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;23.2.8568313" \
+            "cmake;3.22.1"
+
+      - name: Export PATH for SDK tools
+        run: |
+          echo "${ANDROID_SDK_ROOT}/platform-tools" >> $GITHUB_PATH
+          echo "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "${ANDROID_SDK_ROOT}/cmake/3.22.1/bin" >> $GITHUB_PATH
+
+      - name: Make scripts executable
+        run: chmod +x ./scripts/*.sh ./scripts/private/*.sh || true
+
+      - name: Run project setup (patches, thirdparty build)
+        run: ./scripts/setup.sh --skip-sdk-setup
+        # Поставьте больше времени, если нужно; сборка треть‑пати длительная.
+
+      - name: Build APK (debug universal)
+        run: ./gradlew clean assembleUniversalDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: app/build/outputs/apk/**/*
